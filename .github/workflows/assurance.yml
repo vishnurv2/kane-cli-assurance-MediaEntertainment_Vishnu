@@ -6,6 +6,7 @@ on:
     paths:
       - 'sources/**'
       - 'app/**'
+      - 'scripts/**'
       - '.github/workflows/assurance.yml'
   workflow_dispatch:
     inputs:
