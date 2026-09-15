@@ -57,84 +57,98 @@ def pick(titles, territory, *, playable_at, licensed=True):
     return None
 
 
-def territory_in(n: str, default="GB"):
-    """The territory a variable name is asking about.
+def tokens_of(name: str) -> list[str]:
+    """Split a variable name into whole words.
 
-    Names encode it as a suffix or an infix: title_unlicensed_in_gb,
-    catalogue_us_start_url, excluded_titles_for_in. Reading it is the difference
-    between naming a title that really is unlicensed there and asserting
-    something false.
+    Every wrong value this script has produced came from substring matching:
+    "entitled" contains "title", "below_tier" contains "tier", and
+    "unlicensed_in_gb" contains the preposition "in". Tokens remove that whole
+    class of error, so nothing below may use `in` on the raw string.
     """
-    # Split on separators and take the LAST whole token that is a territory
-    # code. Substring matching fails here because "unlicensed_in_gb" contains
-    # "_in_" as the English preposition, which would return IN for a name that
-    # is plainly asking about GB.
-    tokens = [t for t in re.split(r"[^a-z]+", n) if t]
-    codes = [t.upper() for t in tokens if t in ("in", "gb", "us")]
-    return codes[-1] if codes else default
+    return [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
 
 
-def _wants_title(n: str) -> bool:
-    """True when the name asks for a catalogue title, not merely contains 'title'.
+TERRITORIES = ("IN", "GB", "US")
 
-    "entitled_viewer_email" contains the substring "title" without asking for
-    one, so look for the word used as a noun instead.
-    """
-    return ("title_name" in n or n.endswith("_title") or n.startswith("title_")
-            or "_title_" in n or "titles" in n)
+
+def territory_in(toks: list[str], default="GB", *, avoid=None):
+    """The territory a name asks about: the last whole territory token."""
+    codes = [t.upper() for t in toks if t.upper() in TERRITORIES]
+    if codes:
+        return codes[-1]
+    # A "new" territory must differ from the "old" one or a territory-change
+    # test proves nothing, so allow the caller to exclude one.
+    if avoid:
+        return next(t for t in TERRITORIES if t != avoid)
+    return default
+
+
+def title_for(toks, titles, terr, today):
+    """A title from the fixture that genuinely matches the situation named."""
+    has = lambda *w: any(t in toks for t in w)
+
+    if has("unlicensed", "blocked", "outside", "excluded"):
+        return pick(titles, terr, playable_at=None, licensed=False)
+    if has("expired"):
+        return next((x for x in titles
+                     if x["windowEnd"] < today and terr in x["territories"]), None)
+    if has("future", "coming", "upcoming"):
+        return next((x for x in titles
+                     if x["windowStart"] > today and terr in x["territories"]), None)
+    if has("insufficient", "below", "upgrade", "higher"):
+        # licensed here, but needs more than Free, so a Free viewer is blocked
+        return next((x for x in titles
+                     if terr in x["territories"]
+                     and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
+    return pick(titles, terr, playable_at="Premium")
 
 
 def resolve(name: str, titles, app_url: str, today: str):
     """Map one declared variable name to a value drawn from the fixture."""
-    n = name.lower()
-    # Substring matching has to be ordered carefully: "entitled" contains
-    # "title", and "below_tier" contains "tier", so the specific cases are
-    # tested before the general ones.
+    toks = tokens_of(name)
+    has = lambda *w: any(t in toks for t in w)
 
-    # The catalogue has no authentication, so nothing in the fixture can supply
-    # a credential. Refuse rather than invent one.
-    if any(w in n for w in ("email", "password", "username", "credential",
-                            "login", "signin", "sign_in", "account")):
+    # No authentication exists, so no credential can be true. Refuse.
+    if has("email", "password", "username", "credential", "login", "signin", "account"):
         return None
 
-    if "url" in n or n.endswith("_link"):
+    if has("url", "link", "endpoint"):
         return app_url
 
-    # territory / tier selections
-    if "territory" in n and not any(w in n for w in ("title", "blocked", "excluded")):
-        return territory_in(n)
-    if ("tier" in n or "plan" in n) and not _wants_title(n):
-        if "upgrade" in n or "required" in n:
-            # must agree with whatever title the below-tier case selects, or the
-            # test asserts an upgrade path to a tier that title never needed
-            terr = territory_in(n)
-            t = next((x for x in titles
-                      if terr in x["territories"]
-                      and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
-            return t["minTier"] if t else "Premium"
-        if "below" in n or "low" in n:
+    # With tokens, "entitled_viewer_email" yields [entitled, viewer, email] and
+    # never contains a "title" token, so the substring guard that used to be
+    # needed here would now only do harm: it would reject entitled_title, which
+    # plainly does want a title.
+    #
+    # Several names carry two type nouns: insufficient_tier_territory wants a
+    # territory, territory_blocked_viewer_tier wants a tier. The LAST type noun
+    # is the one being asked for; earlier ones qualify the situation.
+    kinds = {"title": "title", "titles": "title",
+             "tier": "tier", "plan": "tier",
+             "territory": "territory", "region": "territory", "market": "territory"}
+    last_kind = next((kinds[t] for t in reversed(toks) if t in kinds), None)
+    wants_title = last_kind == "title"
+    wants_territory = last_kind == "territory"
+    wants_tier = last_kind == "tier"
+
+    if wants_tier:
+        terr = territory_in(toks)
+        subject = title_for(toks, titles, terr, today)
+        if has("granting", "required", "upgrade", "minimum"):
+            # the tier that would grant access to the very title chosen above
+            return subject["minTier"] if subject else "Standard"
+        if has("insufficient", "below", "low", "lacking"):
+            # the viewer's tier, which must be BELOW what the title requires
             return "Free"
         return "Premium"
 
-    # title names, qualified by the situation the test needs
-    if _wants_title(n):
-        terr = territory_in(n)
-        if "blocked" in n or "outside" in n or "unlicensed" in n or "excluded" in n:
-            # a title genuinely NOT licensed in the territory the name asks about
-            t = pick(titles, terr, playable_at=None, licensed=False)
-        elif "below" in n or "upgrade" in n or "higher" in n:
-            # licensed there, but above the Free tier, so a Free viewer is blocked
-            t = next((x for x in titles
-                      if terr in x["territories"]
-                      and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
-        elif "expired" in n:
-            t = next((x for x in titles
-                      if x["windowEnd"] < today and terr in x["territories"]), None)
-        elif "future" in n or "coming" in n:
-            t = next((x for x in titles
-                      if x["windowStart"] > today and terr in x["territories"]), None)
-        else:
-            t = pick(titles, terr, playable_at="Premium")
+    if wants_territory and not wants_title:
+        if has("new", "target", "switched", "destination"):
+            return territory_in(toks, avoid=territory_in(toks, default="GB"))
+        return territory_in(toks)
+
+    if wants_title:
+        t = title_for(toks, titles, territory_in(toks), today)
         return t["name"] if t else None
 
     return None

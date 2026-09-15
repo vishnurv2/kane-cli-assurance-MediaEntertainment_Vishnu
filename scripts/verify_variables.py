@@ -52,6 +52,35 @@ def main() -> int:
         elif ("future" in n or "coming" in n) and t["windowStart"] <= today:
             bad.append(f"{name} = {value}: window opened {t['windowStart']}, not future")
 
+    # Structural check: a name whose last type noun is "tier" must hold a tier,
+    # and one ending in "territory" must hold a territory. A tier variable that
+    # was handed "GB" shipped once, and reads plausibly in a log.
+    import re as _re
+    TIERS = {"Free", "Standard", "Premium"}
+    TERRS = {"IN", "GB", "US"}
+    kinds = {"title": "title", "titles": "title", "tier": "tier", "plan": "tier",
+             "territory": "territory", "region": "territory", "market": "territory"}
+    for name, value in values.items():
+        if not value:
+            continue
+        toks = [t for t in _re.split(r"[^a-z0-9]+", name.lower()) if t]
+        kind = next((kinds[t] for t in reversed(toks) if t in kinds), None)
+        if kind == "tier" and value not in TIERS:
+            bad.append(f"{name} = {value}: not a subscription tier {sorted(TIERS)}")
+        elif kind == "territory" and value not in TERRS:
+            bad.append(f"{name} = {value}: not a territory {sorted(TERRS)}")
+        elif kind == "title" and value not in titles and value not in TIERS | TERRS:
+            pass  # a list of titles, or a name the fixture does not carry
+
+    # old and new territory must differ or a change test proves nothing
+    olds = {n: v for n, v in values.items() if v and "old" in n.split("_")}
+    news = {n: v for n, v in values.items() if v and "new" in n.split("_")}
+    for on, ov in olds.items():
+        prefix = on.rsplit("old", 1)[0]
+        for nn, nv in news.items():
+            if nn.startswith(prefix) and ov == nv:
+                bad.append(f"{on} and {nn} are both {ov}: a change test needs them to differ")
+
     if bad:
         print("variables that contradict the catalogue:")
         for b in bad:
