@@ -198,6 +198,26 @@ jobs:
             > verdicts/design.json
           kane-cli context review --verdicts verdicts/design.json --json
 
+      # design tests writes .testmuai/variables/assurance.json with every value
+      # empty, and testmd run refuses to dispatch while any is unset
+      # ("unresolved_variables - nothing was dispatched"). Fill them from the
+      # catalogue the app actually serves, so a named title is a real title in a
+      # territory it is really licensed for. Anything the fixture cannot satisfy
+      # is left empty and reported rather than invented.
+      - name: Fill the declared test variables
+        if: ${{ inputs.skip_design != true }}
+        continue-on-error: true
+        run: |
+          python3 scripts/fill_variables.py --app-url "$APP_URL" | tee fill-vars.log
+          {
+            echo "### Test variables"
+            echo ''
+            echo '```'
+            cat fill-vars.log
+            echo '```'
+            echo ''
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
       - name: Author and run tests
         continue-on-error: true
         run: |

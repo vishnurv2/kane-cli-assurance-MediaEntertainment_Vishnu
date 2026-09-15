@@ -30,6 +30,11 @@ they may *play* depends on the viewer's territory and their subscription tier,
 and on the licence window the title sits in. This document defines what the
 product must do when a viewer browses or plays.
 
+The catalogue has no authentication. A viewer's territory and subscription tier
+are selected directly in the page header, and every requirement below is
+evaluated against those two selections. There is no sign-in step, no account,
+and no credentials.
+
 Territories in scope: IN, GB, US.
 Subscription tiers in scope: Free (ad supported), Standard, Premium.
 
