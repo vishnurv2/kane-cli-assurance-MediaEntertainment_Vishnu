@@ -1,0 +1,9 @@
+node_modules/
+*.log
+coverage.json
+site/
+.DS_Store
+__pycache__/
+*.pyc
+merge-report.json
+merged-validate.json

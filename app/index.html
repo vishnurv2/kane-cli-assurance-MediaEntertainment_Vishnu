@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StreamRights - Catalogue</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="chrome">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>StreamRights</h1>
+  </div>
+
+  <nav class="primary" aria-label="Primary">
+    <a class="active" href="#browse-view">Home</a>
+    <a href="#browse-view">Series</a>
+    <a href="#browse-view">Films</a>
+    <a href="#browse-view">My List</a>
+  </nav>
+
+  <div class="controls">
+    <label for="territory">Territory</label>
+    <select id="territory" data-testid="territory-select" aria-label="Territory">
+      <option value="IN">IN</option>
+      <option value="GB">GB</option>
+      <option value="US">US</option>
+    </select>
+    <label for="tier">Tier</label>
+    <select id="tier" data-testid="tier-select" aria-label="Subscription tier">
+      <option value="Free">Free</option>
+      <option value="Standard">Standard</option>
+      <option value="Premium">Premium</option>
+    </select>
+    <span class="avatar" aria-hidden="true">VK</span>
+  </div>
+</header>
+
+<main>
+  <section id="browse-view" data-testid="browse-view">
+    <div id="hero" class="hero" hidden>
+      <div class="hero-art" id="hero-art" aria-hidden="true"></div>
+      <div class="hero-copy">
+        <p class="eyebrow">Featured in <span id="hero-territory"></span></p>
+        <h3 id="hero-name" data-testid="hero-name"></h3>
+        <p class="hero-meta"><span id="hero-rating" class="pill"></span><span id="hero-tier" class="pill ghost"></span></p>
+        <button id="hero-play" data-testid="hero-play" class="cta">Play</button>
+      </div>
+    </div>
+
+    <h2>Browse</h2>
+    <ul id="catalogue" data-testid="catalogue-list" aria-label="Catalogue"></ul>
+    <p id="empty-state" data-testid="empty-state" hidden>No titles are available in this territory.</p>
+  </section>
+
+  <section id="detail-view" data-testid="detail-view" hidden>
+    <button id="back-to-browse" data-testid="back-to-browse" class="back">Back to browse</button>
+    <div class="detail-grid">
+      <div class="detail-art" id="detail-art" aria-hidden="true"></div>
+      <div class="detail-copy">
+        <h2 id="detail-name" data-testid="detail-name"></h2>
+        <p class="detail-line">Certification rating: <span id="detail-rating" data-testid="detail-rating" class="pill"></span></p>
+        <p class="detail-line">Availability: <span id="detail-availability" data-testid="detail-availability"></span></p>
+        <p id="detail-synopsis" class="synopsis"></p>
+        <div class="detail-actions">
+          <button id="play-button" data-testid="play-button" class="cta">Play</button>
+          <button id="upgrade-button" data-testid="upgrade-button" class="cta ghost" hidden>Upgrade</button>
+        </div>
+        <p id="block-reason" data-testid="block-reason" class="notice" hidden></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="player-view" data-testid="player-view" hidden>
+    <h2>Player</h2>
+    <div class="stage">
+      <div class="stage-art" id="player-art" aria-hidden="true"></div>
+      <div class="scrim" aria-hidden="true"></div>
+      <div class="transport">
+        <div class="bar"><span class="fill"></span></div>
+        <div class="times"><span>00:12</span><span>01:47:30</span></div>
+      </div>
+    </div>
+    <p id="now-playing" data-testid="now-playing"></p>
+    <button id="stop-button" data-testid="stop-button" class="cta ghost">Stop</button>
+  </section>
+</main>
+
+<footer class="chrome foot">
+  <span>StreamRights</span>
+  <span>Licensing enquiries · rights@streamrights.example</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

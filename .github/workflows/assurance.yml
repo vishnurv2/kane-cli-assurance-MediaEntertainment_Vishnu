@@ -1,0 +1,403 @@
+name: Assurance · OTT Entitlement and Regional Rights
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sources/**'
+      - 'app/**'
+      - '.github/workflows/assurance.yml'
+  workflow_dispatch:
+    inputs:
+      max_tests:
+        description: 'Max tests designed per use-case'
+        required: false
+        default: '6'
+      skip_design:
+        description: 'Skip the design stage (no credits spent)'
+        type: boolean
+        required: false
+        default: false
+      apply_reconcile:
+        description: 'Apply the reconcile plan instead of only staging it'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: assurance-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  APP_URL: http://127.0.0.1:8080
+  KANE_CLI_USER_AGENT: streamrights-assurance
+
+jobs:
+  assurance:
+    runs-on: ubuntu-latest
+    # Ceiling, because the known failure mode is an agent that stops producing
+    # actions rather than erroring (see FINDINGS.md F3) and the GitHub default is
+    # six hours. Sized against the worst case rather than the happy path:
+    # extract ~5 min + design ~4 min per use-case + 8 tests at --timeout 240
+    # + setup, which lands near 55 min. 90 leaves headroom without hiding a hang.
+    timeout-minutes: 90
+    outputs:
+      graph: ${{ steps.graph.outputs.produced }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # kane-cli drives a real Chrome and looks for google-chrome /
+      # google-chrome-stable / chromium on PATH. ubuntu-latest usually ships one,
+      # but that is an image detail rather than a guarantee, so pin it explicitly
+      # and hand the resolved binary to the CLI.
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install kane-cli
+        run: npm install -g @testmuai/kane-cli@latest
+
+      - name: Point kane-cli at the resolved Chrome
+        run: |
+          CHROME="${{ steps.chrome.outputs.chrome-path }}"
+          if [ -z "$CHROME" ] || [ ! -x "$CHROME" ]; then
+            CHROME=$(command -v google-chrome || command -v google-chrome-stable \
+                     || command -v chromium || true)
+          fi
+          # macOS fallback, so the same workflow body is runnable locally.
+          if [ -z "$CHROME" ] && [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; then
+            CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          fi
+
+          # Deliberately not fatal. Only `testmd run` needs a browser; ingest,
+          # extract, design, cover, reconcile, evidence and the graph all work
+          # without one. Killing the job here would throw away every stage that
+          # would have succeeded, so warn and let the test stage be the thing
+          # that reports the consequence.
+          if [ -z "$CHROME" ]; then
+            echo "::warning::no Chrome found - test execution will fail; the assurance stages still run."
+            exit 0
+          fi
+          echo "KANE_CLI_CHROME_PATH=$CHROME" >> "${GITHUB_ENV:-/dev/null}"
+          echo "using chrome: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unknown'))"
+
+      - name: Authenticate
+        env:
+          LT_USERNAME: ${{ secrets.LT_USERNAME }}
+          LT_ACCESS_KEY: ${{ secrets.LT_ACCESS_KEY }}
+        run: |
+          if [ -z "$LT_USERNAME" ] || [ -z "$LT_ACCESS_KEY" ]; then
+            echo "::error::LT_USERNAME and LT_ACCESS_KEY must be set as repository secrets."
+            exit 1
+          fi
+          kane-cli login --username "$LT_USERNAME" --access-key "$LT_ACCESS_KEY"
+          kane-cli whoami
+
+      - name: Serve the demo app
+        run: |
+          # nohup + redirect so the server does not hold the step's stdout open;
+          # a backgrounded process still attached to the pipe can keep the step
+          # from ever returning.
+          nohup python3 -m http.server 8080 --directory app > /tmp/app-server.log 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -sf "$APP_URL" >/dev/null && break
+            sleep 1
+          done
+          curl -sf "$APP_URL" >/dev/null || { echo "::error::app did not come up"; exit 1; }
+
+      # Both documents go in together. The PRD alone would extract cleanly;
+      # the point of this repo is that it does not. See CONFLICTS.md.
+      - name: Ingest both requirement sources
+        run: |
+          source scripts/lib.sh
+          kane_run ingest.log kane-cli context ingest \
+            sources/prd-entitlement-playback.md \
+            sources/rights-schedule-2026.md \
+            --mode ci
+          summarize "Ingest" ingest.log
+
+      # A partial extract must not kill the run. One source failing (today:
+      # rights-schedule-2026 needs an extract@5+ template binding) still leaves a
+      # usable graph from whatever did extract. No use-cases at all is still fatal,
+      # because nothing downstream has anything to work on.
+      - name: Extract use-cases
+        run: |
+          source scripts/lib.sh
+          extract_rc=0
+          kane_run extract.log kane-cli context extract --mode ci || extract_rc=$?
+          summarize "Extract" extract.log
+
+          UCS=$(kane-cli context list --json --type usecase \
+                  | python3 scripts/refs.py uc- | wc -w | tr -d ' ')
+          echo "use-cases in the graph: $UCS (extract exit $extract_rc)"
+
+          if [ "$UCS" -eq 0 ]; then
+            echo "::error::extract produced no use-cases at all (exit $extract_rc) - nothing downstream can run."
+            exit 1
+          fi
+
+          if [ "$extract_rc" -ne 0 ]; then
+            FAILED=$(grep -oE '[0-9]+ of [0-9]+ source\(s\) failed.*' extract.log | tail -1)
+            echo "::warning::partial extract (exit $extract_rc): ${FAILED:-see extract.log}. Continuing with $UCS use-case(s)."
+            {
+              echo "### Partial extract - read this before trusting the coverage below"
+              echo ''
+              echo "\`context extract\` exited ${extract_rc}. ${FAILED:-One or more sources failed to extract.}"
+              echo ''
+              echo "The run continued against the ${UCS} use-case(s) that did extract, so every"
+              echo "number below is scoped to those sources only - not to the full requirement set."
+              echo ''
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          fi
+
+      - name: Checkpoint 1 · approve use-cases
+        run: |
+          mkdir -p verdicts
+          kane-cli context list --json --inferred \
+            | python3 scripts/approve.py --types usecase \
+            > verdicts/usecases.json
+          cat verdicts/usecases.json
+          kane-cli context review --verdicts verdicts/usecases.json --json
+
+      - name: Design tests
+        if: ${{ inputs.skip_design != true }}
+        run: |
+          source scripts/lib.sh
+          MAX="${{ inputs.max_tests || '6' }}"
+          # Take refs from the live graph. Ids are not stable between runs.
+          REFS=$(kane-cli context list --json --type usecase | python3 scripts/refs.py uc-)
+          echo "designing for: $REFS"
+          if [ -z "$REFS" ]; then
+            echo "::error::no use-cases in the graph to design against - extract or checkpoint 1 produced nothing."
+            exit 1
+          fi
+          for ref in $REFS; do
+            kane_run "design-$ref.log" kane-cli design tests \
+              --use-case "$ref" --mode ci --max "$MAX" || \
+              echo "::warning::design failed for $ref, continuing"
+          done
+          cat design-*.log > design.log 2>/dev/null || true
+          summarize "Design" design.log
+
+      - name: Checkpoint 2 · approve the design
+        if: ${{ inputs.skip_design != true }}
+        run: |
+          kane-cli context list --json --inferred \
+            | python3 scripts/approve.py --types ac,scenario,test \
+            > verdicts/design.json
+          kane-cli context review --verdicts verdicts/design.json --json
+
+      - name: Author and run tests
+        continue-on-error: true
+        run: |
+          source scripts/lib.sh
+          kane-cli config set-url "$APP_URL" || true
+          shopt -s nullglob
+          for f in .testmuai/tests/*_test.md; do
+            kane_run "run-$(basename "$f").log" \
+              kane-cli testmd run "$f" --agent --headless --timeout 240 || \
+              echo "::warning::test failed: $f (expected for schedule-derived tests)"
+          done
+
+      - name: Coverage ribbon
+        continue-on-error: true
+        run: |
+          source scripts/lib.sh
+          kane_run cover.log kane-cli cover gaps || true
+          summarize "Coverage · designed vs proven" cover.log
+          kane-cli cover gaps --json > coverage.json || true
+
+      # Requirements drift is the permanent condition, not an edge case: this is
+      # the stage that keeps the suite honest when a source changes. It runs on
+      # every execution whenever a -v2 source is present, rather than hiding
+      # behind an input that is blank by default and therefore never fires.
+      - name: Reconcile the revised PRD
+        if: ${{ inputs.skip_design != true }}
+        continue-on-error: true
+        run: |
+          source scripts/lib.sh
+          shopt -s nullglob
+          V2=(sources/*-v2.md)
+          if [ ${#V2[@]} -eq 0 ]; then
+            echo "no -v2 source present; nothing to reconcile"
+            exit 0
+          fi
+
+          NEW="${V2[0]}"
+          # The source id is the v1 filename without its extension -- reconcile
+          # moves that source's head rather than landing a second source.
+          SOURCE_ID=$(basename "${NEW%-v2.md}")
+          echo "reconciling $NEW against source id: $SOURCE_ID"
+
+          if ! kane-cli context list --json --type source \
+                 | grep -q "\"$SOURCE_ID\""; then
+            echo "::warning::source '$SOURCE_ID' is not in the graph - skipping reconcile."
+            exit 0
+          fi
+
+          MODE_FLAG="--plan"
+          if [ "${{ inputs.apply_reconcile }}" = "true" ]; then
+            MODE_FLAG="--apply"
+          fi
+
+          rc=0
+          kane_run reconcile.log kane-cli maintain reconcile \
+            --from "$NEW" --source-id "$SOURCE_ID" --mode ci $MODE_FLAG || rc=$?
+          summarize "Reconcile · $SOURCE_ID ← $(basename "$NEW")" reconcile.log
+
+          # exit 3 is the documented "changes are held for a human verdict"
+          # outcome, which is the expected result of a staged plan -- not a failure.
+          if [ "$rc" -eq 3 ]; then
+            echo "reconcile staged a changeset for review (exit 3) - expected for --plan"
+          elif [ "$rc" -ne 0 ]; then
+            echo "::warning::reconcile exited $rc - see reconcile.log"
+          fi
+
+      # One sealed pack per CI run, not a pile of loose ones. Merging is also the
+      # only step that cross-checks packs against each other -- L1 on the merged
+      # pack catches disagreements (e.g. a failure record that says "broken" over
+      # a step that says "passed") which per-pack validation cannot see.
+      - name: Seal, merge and validate the evidence
+        id: evidence
+        continue-on-error: true
+        run: |
+          shopt -s nullglob
+          packs=(.testmuai/evidence/*.evidence)
+          summary() { echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+
+          if [ ${#packs[@]} -eq 0 ]; then
+            echo "::warning::no evidence pack was produced - no test run reached a result."
+            summary "### Evidence"
+            summary ''
+            summary 'No sealed pack: no test run reached a result this time, so the'
+            summary 'proven axis below is empty for lack of evidence, not for failures.'
+            summary ''
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Pre-validate. A pack that fails L1 is excluded rather than allowed to
+          # take the whole merge down with it, and the exclusion is recorded.
+          eligible=(); excluded=()
+          for pack in "${packs[@]}"; do
+            if kane-cli evidence validate "$pack" --profile L1 --json \
+                 > "${pack%.evidence}.validate.json" 2>&1; then
+              eligible+=("$pack")
+            else
+              excluded+=("$(basename "$pack")")
+              echo "::warning::excluding $(basename "$pack") - failed L1 validation"
+            fi
+          done
+
+          summary "### Evidence"
+          summary ''
+          summary "\`\`\`"
+          summary "packs sealed by this run : ${#packs[@]}"
+          summary "eligible for merge       : ${#eligible[@]}"
+          summary "excluded (failed L1)     : ${#excluded[@]} ${excluded[*]:-}"
+
+          if [ ${#eligible[@]} -eq 0 ]; then
+            summary "no eligible pack - nothing merged"
+            summary "\`\`\`"
+            echo "::warning::every pack failed L1; nothing merged."
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # --run-id ties the bundle to this CI run, so the pack's identity is a
+          # fact about the run rather than a random uuid.
+          RUN_ID="gha-${{ github.run_id }}-${{ github.run_number }}"
+          mkdir -p site/evidence
+          OUT="site/evidence/release-${RUN_ID}.evidence"
+
+          # --on-collision stays at the strict default. `discard` is the only mode
+          # that survives a `tests.identity.on_different` clash, and it does so by
+          # dropping the contested test from the bundle -- deleting the evidence
+          # the pack exists to hold. An abort here is a real signal: the same test
+          # produced conflicting records in one run, and that is worth reading.
+          if kane-cli evidence merge "${eligible[@]}" \
+               --run-id "$RUN_ID" --out "$OUT" \
+               --on-collision error --json > merge-report.json 2>&1; then
+            summary "merged                   : $OUT"
+            kane-cli evidence validate "$OUT" --profile L1 --json \
+              > merged-validate.json 2>&1 || true
+            python3 scripts/evidence_summary.py merged-validate.json \
+              >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+            echo "pack=$OUT" >> "$GITHUB_OUTPUT"
+          else
+            REASON=$(grep -o 'evidence merge: aborted.*' merge-report.json | head -1)
+            summary "merge did NOT complete"
+            summary "${REASON:-see merge-report.json}"
+            summary "individual packs above remain valid and are uploaded as artifacts"
+            echo "::warning::evidence merge did not complete: ${REASON:-see merge-report.json}"
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          summary "\`\`\`"
+          summary ''
+          summary "Read it locally with \`kane-cli evidence serve <pack>\`."
+          summary ''
+
+      # Nobody else publishes this. An artifact nobody opens is not an asset.
+      - name: Render the assurance graph
+        id: graph
+        run: |
+          mkdir -p site
+          # --out writes the HTML; --no-open keeps it from shelling out to a
+          # browser on a headless runner. Bare `context view` prints only the
+          # temp-file path, so never redirect it into the page.
+          kane-cli context view --out site/index.html --no-open || true
+          if grep -qi '<html' site/index.html 2>/dev/null; then
+            echo "produced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "produced=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::context view produced no HTML; skipping Pages deploy"
+          fi
+
+      - name: Upload graph for Pages
+        if: steps.graph.outputs.produced == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Upload evidence and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-evidence-${{ github.run_number }}
+          path: |
+            *.log
+            coverage.json
+            merge-report.json
+            merged-validate.json
+            verdicts/
+            .testmuai/
+            .context/
+            site/evidence/
+          if-no-files-found: warn
+
+  publish-graph:
+    needs: assurance
+    if: needs.assurance.outputs.graph == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

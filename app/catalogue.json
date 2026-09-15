@@ -1,0 +1,64 @@
+{
+  "titles": [
+    {
+      "id": "t-harbour-lights",
+      "name": "Harbour Lights",
+      "rating": "15",
+      "territories": ["IN", "GB", "US"],
+      "minTier": "Standard",
+      "adSupportedOnly": false,
+      "windowStart": "2026-01-01",
+      "windowEnd": "2027-12-31"
+    },
+    {
+      "id": "t-monsoon-avenue",
+      "name": "Monsoon Avenue",
+      "rating": "12",
+      "territories": ["IN"],
+      "minTier": "Free",
+      "adSupportedOnly": false,
+      "windowStart": "2026-03-01",
+      "windowEnd": "2027-06-30"
+    },
+    {
+      "id": "t-northern-line",
+      "name": "The Northern Line",
+      "rating": "18",
+      "territories": ["GB"],
+      "minTier": "Premium",
+      "adSupportedOnly": false,
+      "windowStart": "2026-02-01",
+      "windowEnd": "2027-02-01"
+    },
+    {
+      "id": "t-desert-run",
+      "name": "Desert Run",
+      "rating": "15",
+      "territories": ["US", "GB"],
+      "minTier": "Free",
+      "adSupportedOnly": true,
+      "windowStart": "2026-01-15",
+      "windowEnd": "2027-01-15"
+    },
+    {
+      "id": "t-paper-kingdom",
+      "name": "Paper Kingdom",
+      "rating": "PG",
+      "territories": ["IN", "GB", "US"],
+      "minTier": "Free",
+      "adSupportedOnly": false,
+      "windowStart": "2027-11-01",
+      "windowEnd": "2028-11-01"
+    },
+    {
+      "id": "t-last-signal",
+      "name": "The Last Signal",
+      "rating": "15",
+      "territories": ["IN", "US"],
+      "minTier": "Standard",
+      "adSupportedOnly": false,
+      "windowStart": "2024-01-01",
+      "windowEnd": "2025-12-31"
+    }
+  ]
+}
