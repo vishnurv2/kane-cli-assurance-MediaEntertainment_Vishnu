@@ -28,6 +28,7 @@ import argparse
 import datetime
 import json
 import pathlib
+import re
 import sys
 
 VARS = pathlib.Path(".testmuai/variables/assurance.json")
@@ -54,6 +55,23 @@ def pick(titles, territory, *, playable_at, licensed=True):
                 continue
         return t
     return None
+
+
+def territory_in(n: str, default="GB"):
+    """The territory a variable name is asking about.
+
+    Names encode it as a suffix or an infix: title_unlicensed_in_gb,
+    catalogue_us_start_url, excluded_titles_for_in. Reading it is the difference
+    between naming a title that really is unlicensed there and asserting
+    something false.
+    """
+    # Split on separators and take the LAST whole token that is a territory
+    # code. Substring matching fails here because "unlicensed_in_gb" contains
+    # "_in_" as the English preposition, which would return IN for a name that
+    # is plainly asking about GB.
+    tokens = [t for t in re.split(r"[^a-z]+", n) if t]
+    codes = [t.upper() for t in tokens if t in ("in", "gb", "us")]
+    return codes[-1] if codes else default
 
 
 def _wants_title(n: str) -> bool:
@@ -84,13 +102,15 @@ def resolve(name: str, titles, app_url: str, today: str):
 
     # territory / tier selections
     if "territory" in n and not any(w in n for w in ("title", "blocked", "excluded")):
-        return "GB"
+        return territory_in(n)
     if ("tier" in n or "plan" in n) and not _wants_title(n):
         if "upgrade" in n or "required" in n:
             # must agree with whatever title the below-tier case selects, or the
             # test asserts an upgrade path to a tier that title never needed
+            terr = territory_in(n)
             t = next((x for x in titles
-                      if "GB" in x["territories"] and x["minTier"] == "Premium"), None)
+                      if terr in x["territories"]
+                      and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
             return t["minTier"] if t else "Premium"
         if "below" in n or "low" in n:
             return "Free"
@@ -98,17 +118,23 @@ def resolve(name: str, titles, app_url: str, today: str):
 
     # title names, qualified by the situation the test needs
     if _wants_title(n):
-        if "blocked" in n or "outside" in n or "unlicensed" in n:
-            t = pick(titles, "IN", playable_at=None, licensed=False)
+        terr = territory_in(n)
+        if "blocked" in n or "outside" in n or "unlicensed" in n or "excluded" in n:
+            # a title genuinely NOT licensed in the territory the name asks about
+            t = pick(titles, terr, playable_at=None, licensed=False)
         elif "below" in n or "upgrade" in n or "higher" in n:
+            # licensed there, but above the Free tier, so a Free viewer is blocked
             t = next((x for x in titles
-                      if "GB" in x["territories"] and x["minTier"] == "Premium"), None)
+                      if terr in x["territories"]
+                      and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
         elif "expired" in n:
-            t = next((x for x in titles if x["windowEnd"] < today), None)
+            t = next((x for x in titles
+                      if x["windowEnd"] < today and terr in x["territories"]), None)
         elif "future" in n or "coming" in n:
-            t = next((x for x in titles if x["windowStart"] > today), None)
+            t = next((x for x in titles
+                      if x["windowStart"] > today and terr in x["territories"]), None)
         else:
-            t = pick(titles, "GB", playable_at="Premium")
+            t = pick(titles, terr, playable_at="Premium")
         return t["name"] if t else None
 
     return None
