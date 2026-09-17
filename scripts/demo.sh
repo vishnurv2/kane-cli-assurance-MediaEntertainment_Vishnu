@@ -75,22 +75,32 @@ else
 fi
 
 beat "5 · The finding" "THIS IS THE DEMO - slow down, read all three aloud"
-echo
-echo "   R1  sources/prd-entitlement-playback.md:19"
-sed -n '19,23p' sources/prd-entitlement-playback.md | sed 's/^/      /'
-echo
-echo "   R2  sources/prd-entitlement-playback.md:25"
-sed -n '25,29p' sources/prd-entitlement-playback.md | sed 's/^/      /'
-echo
-echo "   R4  sources/prd-entitlement-playback.md:37"
-sed -n '37,41p' sources/prd-entitlement-playback.md | sed 's/^/      /'
+# Find each requirement by name rather than by line number. Hardcoded lines
+# drift the moment the document is edited, and the failure mode is printing the
+# wrong paragraph live in front of a prospect.
+show_req() {
+  local ref="$1" file=sources/prd-entitlement-playback.md
+  local start; start=$(grep -n "^### ${ref} " "$file" | cut -d: -f1)
+  if [ -z "$start" ]; then
+    say "could not find ${ref} in $file"
+    return
+  fi
+  echo
+  echo "   ${ref}  ${file}:${start}"
+  sed -n "${start},$((start + 4))p" "$file" | sed 's/^/      /'
+}
+
+show_req R1
+show_req R2
+show_req R4
 echo
 say "ask: R1 hides the title, R2 says browse is the only route to a detail"
 say "page - so how does a viewer ever reach the page where R4 happens?"
 say "then WAIT. do not fill the silence."
 
-beat "6 · The dead branch" "app/app.js:182 - R4 implemented correctly, unreachable"
-sed -n '182,189p' app/app.js | sed 's/^/   /'
+EV=$(grep -n '^function evaluate' app/app.js | cut -d: -f1)
+beat "6 · The dead branch" "app/app.js:${EV} - R4 implemented correctly, unreachable"
+sed -n "${EV},$((EV + 7))p" app/app.js | sed 's/^/   /'
 echo
 say "no test written from R4 would have told you - the test passes or fails"
 say "on a page that was never reachable."

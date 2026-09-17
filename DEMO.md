@@ -54,8 +54,8 @@ kane-cli context ingest sources/prd-entitlement-playback.md \
 kane-cli context extract --mode ci
 ```
 
-The PRD lands as four use-cases, each citing a line range. The rights schedule
-does not land - you will see:
+The PRD lands as a handful of use-cases, each citing a line range. The rights
+schedule does not land - you will see:
 
 ```
 CRITERIA_OPS_UNSUPPORTED: needs an extract@5+ binding
@@ -81,8 +81,12 @@ kane-cli context view --out site/index.html --no-open && open site/index.html
 ```
 
 ```
-2 sources · 4 use-cases · 21 acceptance criteria · 8 scenarios · 8 tests · 9 gaps
+2 sources · 3-4 use-cases · 20-40 acceptance criteria · scenarios · tests · gaps
 ```
+
+Read the numbers off the screen, do not quote them from here. The design stage
+produces a different count on every run, so a rehearsed figure will be wrong in
+front of the prospect.
 
 > "Every node cites the line it came from. This is the traceability spreadsheet
 > nobody maintains, except it builds itself and it is queryable."
@@ -104,9 +108,9 @@ this order:
 
 | Ref | Line | What it says |
 |---|---|---|
-| R1 | 19 | Titles not licensed for the viewer's territory **are not shown** in browse. |
-| R2 | 25 | Selecting a title **from the browse list** opens its detail page. |
-| R4 | 37 | Outside the licensed territory, **Play does not start** and the reason is indicated. |
+| R1 | 24 | Titles not licensed for the viewer's territory **are not shown** in browse. |
+| R2 | 30 | Selecting a title **from the browse list** opens its detail page. |
+| R4 | 42 | Outside the licensed territory, **Play does not start** and the reason is indicated. |
 
 Then ask the question and wait. Do not fill the silence.
 
@@ -144,23 +148,20 @@ streaming services take option 2, showing the title marked unavailable.
 kane-cli cover gaps
 ```
 
-```
-designed  88% █████████░  19/21 ACs have a verifying test
-proven    41% ████░░░░░░   7/21 · 0 failing · 7 blocked · 7 not yet run
+The shape you will see, with this run's own figures in place of these:
 
-UC-3  Change territory and refresh…   100% designed   100% proven
-UC-1  Start playback for an entitled…  67% designed    67% proven
-UC-2  Browse the catalogue…           100% designed     0% proven
-UC-4  View a title's availability     100% designed     0% proven
+```
+designed  90% █████████░  35/40 ACs have a verifying test
+proven    11% █░░░░░░░░░   4/40 · 0 failing · 31 blocked · 5 not yet run
 ```
 
 Read the **0 failing** out loud. It is the most important number on screen:
 
-> "Nothing is failing. The gap between 88% designed and 41% proven is *blocked*
-> and *not yet run* - the executor stalls on this build, which is an automation
-> problem I've raised and documented in FINDINGS.md F3. That is a completely
-> different statement from 'the product is broken', and this ribbon is the only
-> artifact in the room that can tell the two apart."
+> "Nothing is failing. The gap between the two axes is *blocked* and *not yet
+> run* - the executor stalls on this build, which is an automation problem I have
+> raised and documented in FINDINGS.md F3. That is a completely different
+> statement from 'the product is broken', and this ribbon is the only artifact in
+> the room that can tell the two apart."
 
 That is the argument for a two-axis ribbon in one breath: a single coverage
 percentage would have buried the distinction.

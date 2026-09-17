@@ -16,9 +16,9 @@ Three requirements in the PRD, read together, contradict each other.
 
 | Ref | Line | What it says |
 |---|---|---|
-| R1 | 19 | Titles not licensed for the viewer's territory **are not shown** in the browse list. |
-| R2 | 25 | Selecting a title **from the browse list** opens that title's detail page. |
-| R4 | 37 | When the viewer's territory is not among the title's licensed territories, **Play does not start** and the reason is clearly indicated. |
+| R1 | 24 | Titles not licensed for the viewer's territory **are not shown** in the browse list. |
+| R2 | 30 | Selecting a title **from the browse list** opens that title's detail page. |
+| R4 | 42 | When the viewer's territory is not among the title's licensed territories, **Play does not start** and the reason is clearly indicated. |
 
 R1 removes out-of-territory titles from the only surface R2 offers as a route to
 a detail page. So there is no path to a detail page for a title the viewer is not
@@ -156,6 +156,7 @@ every variable that can be controlled from this repo:
 | Forced re-author (`--author`) | 1 | 0 |
 | Accessible names + ambiguous variable fixed | 1 | 0 |
 | Stable `data-testid` on every control | 1 | 0 |
+| CI on a clean Ubuntu runner, variables filled | 17 | 0 |
 
 The CLI's own verdict engine classifies every one of these as
 `automation_bug` / `agent_misstep`, never a product defect - for example:
@@ -263,7 +264,9 @@ navigated successfully and then stalled again, at *"In the Territory dropdown
 select GB"*.
 
 **So neither F3 nor F4 is the whole story, and the remainder is unexplained.**
-Nineteen runs, one pass. The one recurring detail across every stall is that the
+Nineteen local runs with one pass, and a CI run that dispatched seventeen tests
+on a clean runner with every variable filled and verified, none of which
+completed. The one recurring detail across every stall is that the
 agent stops at a native `<select>`: the first counterfactual stalled at
 *"the agent needed to select GB"*, and so did the last. The passing peer's app
 uses text inputs and buttons, not `<select>` elements. That is a pattern worth
@@ -285,17 +288,21 @@ The coverage ribbon still reports real numbers, because the runs that did
 complete sealed evidence:
 
 ```
-designed  88% ·  19/21 ACs have a verifying test
-proven    41% ·   7/21 ACs · 0 failing · 7 blocked · 7 not yet run
+designed  90% ·  35/40 ACs have a verifying test
+proven    11% ·   4/40 ACs · 0 failing · 31 blocked · 5 not yet run
 ```
 
-Per use-case: UC-3 is 100% designed and 100% proven, UC-1 is 67%/67%, and UC-2
-and UC-4 are fully designed but 0% proven. **Nothing is failing** - the 14
-unproven ACs are `blocked` or `not yet run`, which is precisely the signature of
-an executor that stalls rather than a product that breaks.
+Those are the latest CI figures. They are not comparable with earlier runs: the
+design stage produces a different number of acceptance criteria each time (23,
+then 28, then 40 across three runs), so the percentage moves for reasons that
+have nothing to do with quality. What is comparable is that the run dispatched
+17 tests and sealed 17 evidence packs which merged into one validated bundle.
 
-That distinction is the point. A stalled run leaves an AC unproven, not failed,
-and the ribbon says so.
+**Nothing is failing** in any run so far. Every unproven AC is `blocked` or
+`not yet run`, which is precisely the signature of an executor that stalls
+rather than a product that breaks. That distinction is the point: a stalled run
+leaves an AC unproven, not failed, and the two-axis ribbon is the only artifact
+that says which.
 
 Two mitigations are in the repo because they are good practice regardless:
 `?territory=&tier=` deep links, so a test can open a known viewer state without
