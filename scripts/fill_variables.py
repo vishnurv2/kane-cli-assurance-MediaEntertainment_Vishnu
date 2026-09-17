@@ -60,96 +60,111 @@ def pick(titles, territory, *, playable_at, licensed=True):
 def tokens_of(name: str) -> list[str]:
     """Split a variable name into whole words.
 
-    Every wrong value this script has produced came from substring matching:
-    "entitled" contains "title", "below_tier" contains "tier", and
-    "unlicensed_in_gb" contains the preposition "in". Tokens remove that whole
-    class of error, so nothing below may use `in` on the raw string.
+    Every wrong value this script has produced came from matching substrings or
+    single keywords: "entitled" contains "title", "unlicensed_in_gb" contains the
+    preposition "in", and a keyword list containing "unlicensed" silently misses
+    "not licensed". Names are predicates over the catalogue, so they are parsed
+    as predicates rather than scanned for words.
     """
     return [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
 
 
 TERRITORIES = ("IN", "GB", "US")
+TIERS = ("Free", "Standard", "Premium")
+SKIP = ("licensed", "available", "playable", "shown", "visible", "browse",
+        "catalogue", "catalog", "title", "titles", "name", "expected")
 
 
-def territory_in(toks: list[str], default="GB", *, avoid=None):
-    """The territory a name asks about: the last whole territory token."""
-    codes = [t.upper() for t in toks if t.upper() in TERRITORIES]
-    if codes:
-        return codes[-1]
-    # A "new" territory must differ from the "old" one or a territory-change
-    # test proves nothing, so allow the caller to exclude one.
-    if avoid:
-        return next(t for t in TERRITORIES if t != avoid)
-    return default
+def parse_territories(toks):
+    """Required and excluded territories, honouring negation and the preposition.
+
+    "not_licensed_in_in"  -> excluded IN   (the first "in" is the preposition)
+    "licensed_in_gb_not_us" -> required GB, excluded US
+    """
+    required, excluded, negated, i = [], [], False, 0
+    while i < len(toks):
+        t = toks[i]
+        if t in ("not", "non", "without", "outside", "excluded", "unlicensed"):
+            negated = True
+        elif t == "in" and i + 1 < len(toks) and toks[i + 1].upper() in TERRITORIES:
+            pass                                   # preposition before a code
+        elif t.upper() in TERRITORIES:
+            (excluded if negated else required).append(t.upper())
+            negated = False
+        elif t not in SKIP:
+            negated = False                        # any other noun ends the scope
+        i += 1
+    return required, excluded
 
 
-def title_for(toks, titles, terr, today):
-    """A title from the fixture that genuinely matches the situation named."""
-    has = lambda *w: any(t in toks for t in w)
+def select(toks, titles, today):
+    """Every catalogue title satisfying the predicate the name describes."""
+    has = lambda *w: any(x in toks for x in w)
+    required, excluded = parse_territories(toks)
 
-    if has("unlicensed", "blocked", "outside", "excluded"):
-        return pick(titles, terr, playable_at=None, licensed=False)
-    if has("expired"):
-        return next((x for x in titles
-                     if x["windowEnd"] < today and terr in x["territories"]), None)
-    if has("future", "coming", "upcoming"):
-        return next((x for x in titles
-                     if x["windowStart"] > today and terr in x["territories"]), None)
-    if has("insufficient", "below", "upgrade", "higher"):
-        # licensed here, but needs more than Free, so a Free viewer is blocked
-        return next((x for x in titles
-                     if terr in x["territories"]
-                     and TIER_ORDER[x["minTier"]] > TIER_ORDER["Free"]), None)
-    return pick(titles, terr, playable_at="Premium")
+    out = list(titles)
+    if required:
+        out = [t for t in out if all(r in t["territories"] for r in required)]
+    if excluded:
+        out = [t for t in out if all(e not in t["territories"] for e in excluded)]
+
+    if has("ad") and has("supported"):
+        out = [t for t in out if t.get("adSupportedOnly")]
+    if has("coming", "soon", "future", "upcoming"):
+        out = [t for t in out if t["windowStart"] > today]
+    elif has("expired", "lapsed", "ended"):
+        out = [t for t in out if t["windowEnd"] < today]
+
+    # A tier word means "this title requires it" when paired with required/only,
+    # and "the viewer holds it" otherwise.
+    named_tier = next((t.capitalize() for t in toks if t.capitalize() in TIERS), None)
+    if named_tier and has("required", "requires", "only", "minimum", "granting"):
+        out = [t for t in out if t["minTier"] == named_tier]
+    elif named_tier and has("insufficient", "below", "lacking"):
+        out = [t for t in out if TIER_ORDER[t["minTier"]] > TIER_ORDER[named_tier]]
+    elif named_tier and has("entitled", "eligible"):
+        out = [t for t in out if TIER_ORDER[t["minTier"]] <= TIER_ORDER[named_tier]]
+    return out
 
 
 def resolve(name: str, titles, app_url: str, today: str):
     """Map one declared variable name to a value drawn from the fixture."""
     toks = tokens_of(name)
-    has = lambda *w: any(t in toks for t in w)
+    has = lambda *w: any(x in toks for x in w)
 
-    # No authentication exists, so no credential can be true. Refuse.
     if has("email", "password", "username", "credential", "login", "signin", "account"):
-        return None
-
+        return None                                 # no authentication exists
     if has("url", "link", "endpoint"):
         return app_url
 
-    # With tokens, "entitled_viewer_email" yields [entitled, viewer, email] and
-    # never contains a "title" token, so the substring guard that used to be
-    # needed here would now only do harm: it would reject entitled_title, which
-    # plainly does want a title.
-    #
-    # Several names carry two type nouns: insufficient_tier_territory wants a
-    # territory, territory_blocked_viewer_tier wants a tier. The LAST type noun
-    # is the one being asked for; earlier ones qualify the situation.
-    kinds = {"title": "title", "titles": "title",
-             "tier": "tier", "plan": "tier",
+    kinds = {"title": "title", "titles": "title", "tier": "tier", "plan": "tier",
              "territory": "territory", "region": "territory", "market": "territory"}
-    last_kind = next((kinds[t] for t in reversed(toks) if t in kinds), None)
-    wants_title = last_kind == "title"
-    wants_territory = last_kind == "territory"
-    wants_tier = last_kind == "tier"
+    kind = next((kinds[t] for t in reversed(toks) if t in kinds), None)
 
-    if wants_tier:
-        terr = territory_in(toks)
-        subject = title_for(toks, titles, terr, today)
+    if kind == "tier":
         if has("granting", "required", "upgrade", "minimum"):
-            # the tier that would grant access to the very title chosen above
-            return subject["minTier"] if subject else "Standard"
+            chosen = select(toks, titles, today)
+            return chosen[0]["minTier"] if chosen else "Standard"
         if has("insufficient", "below", "low", "lacking"):
-            # the viewer's tier, which must be BELOW what the title requires
             return "Free"
-        return "Premium"
+        return next((t.capitalize() for t in toks if t.capitalize() in TIERS), "Premium")
 
-    if wants_territory and not wants_title:
+    if kind == "territory":
+        required, excluded = parse_territories(toks)
+        if required:
+            return required[0]
         if has("new", "target", "switched", "destination"):
-            return territory_in(toks, avoid=territory_in(toks, default="GB"))
-        return territory_in(toks)
+            return next(t for t in TERRITORIES if t not in excluded)
+        return "GB"
 
-    if wants_title:
-        t = title_for(toks, titles, territory_in(toks), today)
-        return t["name"] if t else None
+    if kind == "title":
+        chosen = select(toks, titles, today)
+        if not chosen:
+            return None
+        # A plural name wants every match, not the first one.
+        if "titles" in toks:
+            return ", ".join(t["name"] for t in chosen)
+        return chosen[0]["name"]
 
     return None
 
